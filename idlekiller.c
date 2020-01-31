@@ -74,6 +74,10 @@ ssize_t write(int fd, const void *buf, size_t count) {
 }
 
 
+/**
+ * Initialize idlekiller. Set pointers to original functions and other
+ * globals.
+ */
 static __attribute__((constructor)) void init_idlekiller(void) {
     real_epoll_wait = dlsym(RTLD_NEXT, "epoll_wait");
     real_read = dlsym(RTLD_NEXT, "read");
