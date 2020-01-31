@@ -16,31 +16,37 @@
 #define DEFAULT_IDLE_TIMEOUT 10
 #endif // DEFAULT_IDLE_TIMEOUT
 
+//! time at which last read or write occurred
 static time_t last_activity = 0;
+
+//! trigger a timeout if this many seconds pass without i/o
+static time_t idle_timeout = DEFAULT_IDLE_TIMEOUT;
+
+/**
+ * \defgroup wrapped_syscalls
+ * @{
+ */
+//! pointer to original epoll_wait system call
+static int (*real_epoll_wait)(int, struct epoll_event *, int, int) = NULL;
+
+//! pointer to original read system call
+static ssize_t (*real_read)(int, void *, size_t) = NULL;
+
+//! pointer to original write system call
+static ssize_t (*real_write)(int, void *, size_t) = NULL;
+/** @} */
 
 /**
  * Wrap the epoll_wait(2) system call. Exit if there has been no i/o
- * within the given interval.
+ * within idle_timeout seconds.
  */
 int epoll_wait(int epfd, struct epoll_event *events,
               int maxevents, int timeout) {
-    static int (*real_epoll_wait)(int, struct epoll_event *, int, int) = NULL;
-    static time_t idle_timeout = 0;
-
     time_t now;
-
-    if (!real_epoll_wait) {
-        real_epoll_wait = dlsym(RTLD_NEXT, "epoll_wait");
-        if (getenv("IK_IDLE_TIMEOUT")) {
-            idle_timeout = atoi(getenv("IK_IDLE_TIMEOUT"));
-        } else {
-            idle_timeout = DEFAULT_IDLE_TIMEOUT;
-        }
-    }
 
     now = time(NULL);
     if (idle_timeout > 0 && (now - last_activity) > idle_timeout) {
-        fprintf(stderr, "! Idle timeout after ~ %d seconds\n", (int)idle_timeout);
+        fprintf(stderr, "! idle timeout after ~ %d seconds\n", (int)idle_timeout);
         exit(1);
     }
 
@@ -53,11 +59,6 @@ int epoll_wait(int epfd, struct epoll_event *events,
  * read().
  */
 ssize_t read(int fd, void *buf, size_t count) {
-    static ssize_t (*real_read)(int, void *, size_t) = NULL;
-
-    if (!real_read)
-        real_read = dlsym(RTLD_NEXT, "read");
-
     last_activity = time(NULL);
     return real_read(fd, buf, count);
 }
@@ -68,11 +69,17 @@ ssize_t read(int fd, void *buf, size_t count) {
  * write().
  */
 ssize_t write(int fd, const void *buf, size_t count) {
-    static ssize_t (*real_write)(int, void *, size_t) = NULL;
-
-    if (!real_write)
-        real_write = dlsym(RTLD_NEXT, "write");
-
     last_activity = time(NULL);
     return real_write(fd, (void *)buf, count);
+}
+
+
+static __attribute__((constructor)) void init_idlekiller(void) {
+    real_epoll_wait = dlsym(RTLD_NEXT, "epoll_wait");
+    real_read = dlsym(RTLD_NEXT, "read");
+    real_write = dlsym(RTLD_NEXT, "write");
+
+    if (getenv("IK_IDLE_TIMEOUT")) {
+        idle_timeout = atoi(getenv("IK_IDLE_TIMEOUT"));
+    }
 }
